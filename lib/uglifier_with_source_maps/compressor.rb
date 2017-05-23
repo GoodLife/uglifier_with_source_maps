@@ -6,37 +6,41 @@ module UglifierWithSourceMaps
 
     def initialize(options = {})
       @uglifier = Uglifier.new(options)
-      # @cache_key = [
-      #     'UglifierWithSourceMapsCompressor',
-      #     ::Uglifier::VERSION,
-      #     ::UglifierWithSourceMaps::VERSION,
-      #     options
-      #   ]
     end
 
     def compress(data, context)
+      minified_data, sourcemap = Uglifier.new.compile_with_map(data)
 
-      minified_data, sourcemap = @uglifier.compile_with_map(data)
-
-      # write source map
-      minified_filename     = [Rails.application.config.assets.prefix, "#{context.logical_path}-#{digest(minified_data)}.js"].join('/')
-      sourcemap_filename    = [Rails.application.config.assets.prefix, Rails.application.config.assets.sourcemaps_prefix, "#{context.logical_path}-#{digest(minified_data)}.map"].join('/')
-      concatenated_filename = [Rails.application.config.assets.prefix, Rails.application.config.assets.uncompressed_prefix, "#{context.logical_path}-#{digest(minified_data)}.js"].join('/')
+      digest_value = digest(minified_data)
+      minified_filepath = [Rails.application.config.assets.prefix, "#{context.logical_path}-#{digest_value}.js"].join('/')
+      sourcemap_filepath = "tmp/#{context.logical_path}-#{digest_value}.map"
+      unminified_filepath = "tmp/#{context.logical_path}-#{digest_value}.js"
 
       map = JSON.parse(sourcemap)
-      map['file']    = minified_filename
-      map['sources'] = [concatenated_filename]
+      map["file"] = minified_filepath
+      map["sources"] = [unminified_filepath]
 
-      FileUtils.mkdir_p File.dirname(File.join(Rails.public_path, sourcemap_filename))
-      FileUtils.mkdir_p File.dirname(File.join(Rails.public_path, concatenated_filename))
+      FileUtils.mkdir_p File.dirname(File.join(Rails.root, sourcemap_filepath))
+      FileUtils.mkdir_p File.dirname(File.join(Rails.root, unminified_filepath))
 
       # Write sourcemap and uncompressed js
-      File.open(File.join(Rails.public_path, sourcemap_filename), "w") { |f| f.puts map.to_json }
-      File.open(File.join(Rails.public_path, concatenated_filename), "w") {|f| f.write(data)}
+      File.open(File.join(Rails.root, sourcemap_filepath), "w") { |f| f.puts map.to_json }
+      File.open(File.join(Rails.root, unminified_filepath), "w") { |f| f.write(data) }
 
-      sourcemap_comment = "\n//# sourceMappingURL=#{sourcemap_filename}\n"
+      json_file = File.join(Rails.root, "tmp/sourcemap.json")
+      source_maps = []
+      if File.exist?(json_file)
+        source_maps = JSON.parse(File.read(json_file))
+      end
+      source_maps << {
+        version: digest_value,
+        minified_url: "#{AppConfig.domain}#{minified_filepath}",
+        sourcemap_file: sourcemap_filepath,
+        unminified_file: unminified_filepath
+      }
+      File.open(json_file, "w") { |f| f.write(source_maps.to_json) }
 
-      return minified_data + sourcemap_comment
+      minified_data
     end
 
     def digest(io)
